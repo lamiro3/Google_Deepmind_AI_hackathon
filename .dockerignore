@@ -1,0 +1,14 @@
+node_modules
+.next
+out
+.git
+.gitignore
+.env
+.env.*
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+tsconfig.tsbuildinfo
+.DS_Store
+

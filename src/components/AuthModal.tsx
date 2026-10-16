@@ -1,18 +1,21 @@
 "use client";
 
 import React, { useState } from "react";
-import { Loader2, LogIn, Sparkles, UserCheck, UserPlus, X } from "lucide-react";
+import { Loader2, LogIn, ShieldAlert, Sparkles, UserCheck, UserPlus, X } from "lucide-react";
+import { Language } from "@/lib/i18n";
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAuthSuccess: (dashboardData: unknown) => void;
+  lang?: Language;
 }
 
 export default function AuthModal({
   isOpen,
   onClose,
   onAuthSuccess,
+  lang = "ko",
 }: AuthModalProps) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("producer@komposer.kr");
@@ -22,6 +25,8 @@ export default function AuthModal({
   const [loading, setLoading] = useState(false);
 
   if (!isOpen) return null;
+
+  const isKo = lang === "ko";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,13 +40,20 @@ export default function AuthModal({
       });
       const data = await res.json();
       if (!res.ok || data.error) {
-        setError(data.error || "로그인에 실패했습니다.");
+        setError(
+          data.error ||
+            (isKo ? "로그인에 실패했습니다." : "Authentication failed.")
+        );
       } else {
         onAuthSuccess(data);
         onClose();
       }
     } catch {
-      setError("서버와 통신 중 오류가 발생했습니다.");
+      setError(
+        isKo
+          ? "서버와 통신 중 오류가 발생했습니다."
+          : "Network error occurred while communicating with the server."
+      );
     } finally {
       setLoading(false);
     }
@@ -67,13 +79,13 @@ export default function AuthModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xl flex items-center justify-center p-4">
-      <div className="w-full max-w-md bg-zinc-900 border border-white/15 rounded-3xl shadow-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xl flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
+      <div className="w-full max-w-md bg-zinc-900 border-t sm:border border-white/15 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-white/10 bg-gradient-to-r from-pink-500/10 via-violet-500/10 to-transparent">
           <div className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-pink-400" />
-            <h3 className="text-base font-extrabold text-white">
-              Komposer 프로듀서 계정
+            <Sparkles className="w-5 h-5 text-pink-400 shrink-0" />
+            <h3 className="text-sm sm:text-base font-extrabold text-white">
+              {isKo ? "Komposer 프로듀서 로그인" : "Komposer Producer Sign In"}
             </h3>
           </div>
           <button
@@ -84,7 +96,17 @@ export default function AuthModal({
           </button>
         </div>
 
-        <div className="p-6 space-y-5">
+        <div className="p-5 sm:p-6 space-y-5 overflow-y-auto">
+          {/* Status Banner */}
+          <div className="flex items-start gap-2.5 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-xs text-amber-200">
+            <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <p className="leading-relaxed">
+              {isKo
+                ? "로그인하면 메인 화면에 '취향 저격 AI 추천 생성 음악'이 활성화되고, 내가 작곡한 곡과 좋아요 목록을 관리할 수 있습니다."
+                : "Sign in to unlock 'Personalized AI Recommended Tracks' on the Main Page and manage your composed songs & liked tracks."}
+            </p>
+          </div>
+
           {/* Mode Tabs */}
           <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-black/40 border border-white/10">
             <button
@@ -93,14 +115,14 @@ export default function AuthModal({
                 setMode("login");
                 setError("");
               }}
-              className={`py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+              className={`py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition ${
                 mode === "login"
                   ? "bg-gradient-to-r from-pink-500 to-violet-600 text-white"
                   : "text-zinc-400 hover:text-white"
               }`}
             >
               <LogIn className="w-3.5 h-3.5" />
-              <span>로그인</span>
+              <span>{isKo ? "로그인" : "Sign In"}</span>
             </button>
             <button
               type="button"
@@ -109,14 +131,14 @@ export default function AuthModal({
                 setEmail("");
                 setError("");
               }}
-              className={`py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+              className={`py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition ${
                 mode === "register"
                   ? "bg-gradient-to-r from-pink-500 to-violet-600 text-white"
                   : "text-zinc-400 hover:text-white"
               }`}
             >
               <UserPlus className="w-3.5 h-3.5" />
-              <span>새 작곡가 가입</span>
+              <span>{isKo ? "새 작곡가 가입" : "Sign Up"}</span>
             </button>
           </div>
 
@@ -124,14 +146,16 @@ export default function AuthModal({
             {mode === "register" && (
               <div>
                 <label className="block text-xs font-bold text-zinc-300 mb-1">
-                  작곡가 닉네임 (Producer Name)
+                  {isKo
+                    ? "작곡가 닉네임 (Producer Name)"
+                    : "Producer Name (Nickname)"}
                 </label>
                 <input
                   type="text"
                   required
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="예: DJ_NEWWAVE"
+                  placeholder={isKo ? "예: DJ_NEWWAVE" : "e.g., DJ_NEWWAVE"}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-black/50 border border-white/15 text-sm text-white focus:outline-none focus:border-pink-500"
                 />
               </div>
@@ -139,7 +163,7 @@ export default function AuthModal({
 
             <div>
               <label className="block text-xs font-bold text-zinc-300 mb-1">
-                이메일
+                {isKo ? "이메일" : "Email Address"}
               </label>
               <input
                 type="email"
@@ -153,7 +177,7 @@ export default function AuthModal({
 
             <div>
               <label className="block text-xs font-bold text-zinc-300 mb-1">
-                비밀번호
+                {isKo ? "비밀번호" : "Password"}
               </label>
               <input
                 type="password"
@@ -176,16 +200,26 @@ export default function AuthModal({
               className="w-full py-3 rounded-xl bg-gradient-to-r from-pink-500 to-violet-600 hover:brightness-110 text-sm font-extrabold text-white flex items-center justify-center gap-2 shadow-lg shadow-pink-500/25 transition"
             >
               {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-              <span>{mode === "login" ? "로그인하기" : "가입 및 시작하기"}</span>
+              <span>
+                {mode === "login"
+                  ? isKo
+                    ? "로그인하기"
+                    : "Sign In Now"
+                  : isKo
+                    ? "가입 및 시작하기"
+                    : "Create Producer Account"}
+              </span>
             </button>
           </form>
 
           {/* Quick Demo Switcher */}
           <div className="pt-3 border-t border-white/10">
             <p className="text-[11px] font-bold text-zinc-400 mb-2">
-              원클릭 데모 프로듀서 계정 전환 (SQLite DB 연동)
+              {isKo
+                ? "원클릭 데모 프로듀서 계정 로그인 (SQLite DB 연동)"
+                : "1-Click Demo Producer Login (SQLite DB Linked)"}
             </p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => handleQuickDemoLogin("producer@komposer.kr")}
@@ -196,7 +230,9 @@ export default function AuthModal({
                   <span>PRODUCER K</span>
                 </div>
                 <p className="text-[10px] text-zinc-400 mt-0.5 truncate">
-                  뉴진스·에스파·세븐틴 선호
+                  {isKo
+                    ? "뉴진스·에스파·세븐틴 선호"
+                    : "NewJeans · aespa · SEVENTEEN fan"}
                 </p>
               </button>
               <button
@@ -206,10 +242,12 @@ export default function AuthModal({
               >
                 <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-300">
                   <UserCheck className="w-3.5 h-3.5" />
-                  <span>청춘사운드</span>
+                  <span>{isKo ? "청춘사운드" : "YOUTH SOUND"}</span>
                 </div>
                 <p className="text-[10px] text-zinc-400 mt-0.5 truncate">
-                  데이식스·아이유·BTS 선호
+                  {isKo
+                    ? "데이식스·아이유·BTS 선호"
+                    : "DAY6 · IU · BTS fan"}
                 </p>
               </button>
             </div>
@@ -219,4 +257,3 @@ export default function AuthModal({
     </div>
   );
 }
-
