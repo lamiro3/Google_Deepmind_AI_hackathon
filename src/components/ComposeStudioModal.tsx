@@ -7,11 +7,11 @@ import {
   Track,
   YoutubeReference,
 } from "@/types/komposer";
+import { audioEngine } from "@/lib/audioEngine";
+import { Language } from "@/lib/i18n";
 import {
   Check,
-  KeyRound,
   Loader2,
-  Music2,
   Plus,
   Sliders,
   Sparkles,
@@ -27,6 +27,7 @@ interface ComposeStudioModalProps {
   userId: string;
   defaultArtists?: string[];
   onTrackCreated: (newTrack: Track, updatedDashboard: unknown) => void;
+  lang?: Language;
 }
 
 const SAMPLE_YOUTUBE_REFS: Record<string, { url: string; title: string }> = {
@@ -92,27 +93,30 @@ export default function ComposeStudioModal({
   isOpen,
   onClose,
   userId,
-  defaultArtists = ["newjeans", "aespa"],
+  defaultArtists = ["aespa", "newjeans"],
   onTrackCreated,
+  lang = "ko",
 }: ComposeStudioModalProps) {
+  const isKo = lang === "ko";
+
   const [selectedArtistIds, setSelectedArtistIds] = useState<string[]>(
-    defaultArtists.length > 0 ? defaultArtists.slice(0, 2) : ["newjeans", "aespa"]
+    defaultArtists.length > 0 ? defaultArtists.slice(0, 2) : ["aespa", "newjeans"]
   );
   const [customArtistName, setCustomArtistName] = useState("");
   const [collabRatio, setCollabRatio] = useState(50);
   const [youtubeInput, setYoutubeInput] = useState("");
   const [youtubeRefs, setYoutubeRefs] = useState<YoutubeReference[]>([
     {
-      url: "https://www.youtube.com/watch?v=pSUydWEqKwE",
-      videoId: "pSUydWEqKwE",
-      title: "NewJeans (뉴진스) 'Ditto' Official MV",
-      author: "HYBE LABELS",
-    },
-    {
       url: "https://www.youtube.com/watch?v=phuiiNCxRMg",
       videoId: "phuiiNCxRMg",
       title: "aespa 에스파 'Supernova' MV",
       author: "SMTOWN",
+    },
+    {
+      url: "https://www.youtube.com/watch?v=pSUydWEqKwE",
+      videoId: "pSUydWEqKwE",
+      title: "NewJeans (뉴진스) 'Ditto' Official MV",
+      author: "HYBE LABELS",
     },
   ]);
   const [isFetchingYt, setIsFetchingYt] = useState(false);
@@ -121,21 +125,24 @@ export default function ComposeStudioModal({
   const [selectedMood, setSelectedMood] = useState(MOOD_PRESETS[0]);
   const [customBpm, setCustomBpm] = useState<number>(130);
   const [customPrompt, setCustomPrompt] = useState("");
-  const [geminiApiKey, setGeminiApiKey] = useState("");
-  const [showApiKeyField, setShowApiKeyField] = useState(false);
 
   const [isComposing, setIsComposing] = useState(false);
   const [composeStep, setComposeStep] = useState(0);
+  const [vocalProgress, setVocalProgress] = useState<{
+    ready: number;
+    total: number;
+    member: string;
+    section: string;
+  } | null>(null);
 
   if (!isOpen) return null;
 
   const toggleArtist = (artistId: string) => {
     setSelectedArtistIds((prev) => {
       if (prev.includes(artistId)) {
-        if (prev.length === 1) return prev; // keep at least 1
+        if (prev.length === 1) return prev;
         return prev.filter((id) => id !== artistId);
       }
-      // Allow up to 3 artists for Collab
       if (prev.length >= 3) {
         return [...prev.slice(1), artistId];
       }
@@ -193,9 +200,9 @@ export default function ComposeStudioModal({
 
     setIsComposing(true);
     setComposeStep(1);
+    setVocalProgress(null);
 
-    const stepTimer1 = setTimeout(() => setComposeStep(2), 700);
-    const stepTimer2 = setTimeout(() => setComposeStep(3), 1400);
+    const stepTimer1 = setTimeout(() => setComposeStep(2), 600);
 
     try {
       const res = await fetch("/api/compose", {
@@ -211,29 +218,36 @@ export default function ComposeStudioModal({
           mood: selectedMood,
           bpm: customBpm,
           customPrompt,
-          apiKey: geminiApiKey,
         }),
       });
 
       const data = await res.json();
       clearTimeout(stepTimer1);
-      clearTimeout(stepTimer2);
-      setComposeStep(4);
 
       if (data?.track) {
+        setComposeStep(3);
+        await audioEngine.preloadTrackVocalsWithProgress(
+          data.track,
+          (ready, total, member, section) => {
+            setVocalProgress({ ready, total, member, section });
+          }
+        );
+
+        setComposeStep(4);
         setTimeout(() => {
           setIsComposing(false);
+          setVocalProgress(null);
           onTrackCreated(data.track, data.dashboard);
           onClose();
-        }, 450);
+        }, 350);
       } else {
         setIsComposing(false);
       }
     } catch (err) {
       console.error("Failed to compose:", err);
       clearTimeout(stepTimer1);
-      clearTimeout(stepTimer2);
       setIsComposing(false);
+      setVocalProgress(null);
     }
   };
 
@@ -245,209 +259,167 @@ export default function ComposeStudioModal({
     selectedArtistObjects.length > 1 || Boolean(customArtistName.trim());
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xl flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-      <div className="relative w-full max-w-4xl bg-zinc-900 border border-white/15 rounded-3xl shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xl flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
+      <div className="relative w-full max-w-2xl bg-zinc-900 border-t sm:border border-white/15 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col">
         {/* Top Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-gradient-to-r from-pink-500/10 via-violet-500/10 to-transparent">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-pink-500 to-violet-600 flex items-center justify-center shadow-lg shadow-pink-500/30">
-              <Wand2 className="w-5 h-5 text-white" />
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-pink-500 to-violet-600 flex items-center justify-center shrink-0">
+              <Wand2 className="w-4 h-4 text-white" />
             </div>
-            <div>
-              <h2 className="text-lg sm:text-xl font-extrabold text-white flex items-center gap-2">
-                <span>Komposer AI 작곡 스튜디오</span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-pink-500/20 text-pink-300 border border-pink-500/30">
-                  GEMINI + WEB SYNTH
-                </span>
-              </h2>
-              <p className="text-xs text-zinc-400">
-                좋아하는 K-POP 가수의 유튜브 MV와 스타일을 조합해 세상에 없던 신곡/콜라보 곡을 생성하세요
-              </p>
-            </div>
+            <h2 className="text-base sm:text-lg font-extrabold text-white truncate">
+              {isKo ? "새 K-POP 생성 음악 작곡" : "Compose New K-POP Track"}
+            </h2>
           </div>
-
           <button
             onClick={onClose}
-            className="p-2 rounded-full bg-white/5 hover:bg-white/15 text-zinc-400 hover:text-white transition"
+            disabled={isComposing}
+            className="p-2 rounded-full bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleComposeSubmit} className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* STEP 1: ARTIST & COLLAB SELECTION */}
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label className="text-sm font-extrabold text-white flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-pink-500 text-white text-xs flex items-center justify-center font-bold">
-                  1
-                </span>
-                <span>가수/그룹 스타일 선택 (2팀 이상 선택 시 콜라보 자동 활성화!)</span>
+        <form
+          onSubmit={handleComposeSubmit}
+          className="p-5 space-y-5 overflow-y-auto flex-1"
+        >
+          {/* STEP 1: Select Artists */}
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs sm:text-sm font-bold text-white">
+                {isKo
+                  ? "1. 아티스트 선택 (최대 3팀 콜라보)"
+                  : "1. Select Artists (Up to 3 for Collab)"}
               </label>
-              <span className="text-xs text-pink-400 font-semibold">
-                {isCollab
-                  ? `✨ 드림 콜라보 모드 (${selectedArtistObjects.map((a) => a?.koreanName).join(" × ")}${
-                      customArtistName ? ` × ${customArtistName}` : ""
-                    })`
-                  : `🎤 솔로 아티스트 스타일 (${selectedArtistObjects[0]?.koreanName})`}
+              <span className="text-xs text-pink-400 font-medium">
+                {selectedArtistObjects.map((a) => a?.name).join(" × ")}
               </span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
               {KPOP_ARTISTS.map((artist) => {
                 const isSelected = selectedArtistIds.includes(artist.id);
-                const selectionOrder = selectedArtistIds.indexOf(artist.id) + 1;
                 return (
                   <button
-                    key={artist.id}
                     type="button"
+                    key={artist.id}
                     onClick={() => toggleArtist(artist.id)}
-                    className={`relative text-left p-3 rounded-2xl border transition-all ${
+                    className={`flex items-center justify-between p-2.5 rounded-xl border text-left transition ${
                       isSelected
-                        ? "bg-gradient-to-br from-pink-500/25 to-violet-600/25 border-pink-500 shadow-lg shadow-pink-500/10"
-                        : "bg-white/[0.03] border-white/10 hover:bg-white/[0.07]"
+                        ? "bg-pink-500/15 border-pink-500/50 text-white"
+                        : "bg-white/[0.03] border-white/10 text-zinc-300 hover:bg-white/[0.07]"
                     }`}
                   >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-extrabold text-white truncate">
+                    <div className="min-w-0 pr-1">
+                      <p className="font-bold text-xs text-white truncate">
                         {artist.name}
-                      </span>
-                      {isSelected && (
-                        <span className="w-5 h-5 rounded-full bg-pink-500 text-[10px] font-extrabold text-white flex items-center justify-center">
-                          {selectionOrder}
-                        </span>
-                      )}
+                      </p>
+                      <p className="text-[11px] text-zinc-400 truncate">
+                        {artist.koreanName}
+                      </p>
                     </div>
-                    <p className="text-[11px] text-zinc-300 font-semibold mb-1">
-                      {artist.koreanName} · {artist.groupType}
-                    </p>
-                    <p className="text-[10px] text-zinc-400 line-clamp-1">
-                      대표곡: {artist.representativeHits.slice(0, 2).join(", ")}
-                    </p>
+                    {isSelected && (
+                      <span className="w-4 h-4 rounded-full bg-pink-500 text-white flex items-center justify-center shrink-0">
+                        <Check className="w-2.5 h-2.5" />
+                      </span>
+                    )}
                   </button>
                 );
               })}
             </div>
 
-            {/* Collab Blend Slider & Custom Artist Input */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-              {selectedArtistObjects.length >= 2 && (
-                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-pink-500/10 to-violet-500/10 border border-pink-500/30">
-                  <div className="flex items-center justify-between text-xs font-bold text-white mb-2">
-                    <span className="flex items-center gap-1 text-pink-300">
-                      <Sliders className="w-3.5 h-3.5" />
-                      {selectedArtistObjects[0]?.koreanName} ({collabRatio}%)
-                    </span>
-                    <span className="text-violet-300">
-                      {selectedArtistObjects[1]?.koreanName} ({100 - collabRatio}%)
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min={20}
-                    max={80}
-                    step={5}
-                    value={collabRatio}
-                    onChange={(e) => setCollabRatio(Number(e.target.value))}
-                    className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-pink-500"
-                  />
-                  <p className="text-[11px] text-zinc-400 mt-1">
-                    슬라이더를 조절해 두 아티스트의 사운드·보컬 비중을 블렌딩합니다
-                  </p>
+            {/* Collab Ratio Slider */}
+            {isCollab && selectedArtistObjects.length >= 2 && (
+              <div className="p-3 rounded-xl bg-white/[0.03] border border-white/10 space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-400 flex items-center gap-1">
+                    <Sliders className="w-3.5 h-3.5 text-pink-400" />
+                    {isKo ? "콜라보 스타일 비중" : "Collab Style Ratio"}
+                  </span>
+                  <span className="font-mono text-white">
+                    {selectedArtistObjects[0]?.name} {collabRatio}% :{" "}
+                    {selectedArtistObjects[1]?.name} {100 - collabRatio}%
+                  </span>
                 </div>
-              )}
-
-              <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10">
-                <label className="block text-xs font-bold text-zinc-300 mb-1.5">
-                  직접 추가하고 싶은 가수/그룹 이름 (선택)
-                </label>
                 <input
-                  type="text"
-                  value={customArtistName}
-                  onChange={(e) => setCustomArtistName(e.target.value)}
-                  placeholder="예: QWER, 태연, 투어스(TWS), 키스오브라이프..."
-                  className="w-full px-3 py-2 rounded-xl bg-black/40 border border-white/10 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-pink-500"
+                  type="range"
+                  min={20}
+                  max={80}
+                  step={5}
+                  value={collabRatio}
+                  onChange={(e) => setCollabRatio(parseInt(e.target.value, 10))}
+                  className="w-full accent-pink-500 h-1.5 bg-white/15 rounded-lg cursor-pointer"
                 />
               </div>
-            </div>
+            )}
           </div>
 
-          {/* STEP 2: YOUTUBE MV / SONG REFERENCE LINKS */}
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label className="text-sm font-extrabold text-white flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-pink-500 text-white text-xs flex items-center justify-center font-bold">
-                  2
+          {/* STEP 2: YouTube References */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
+                <Youtube className="w-4 h-4 text-red-400" />
+                <span>
+                  {isKo
+                    ? "2. 참고 유튜브 뮤직비디오"
+                    : "2. Reference YouTube MVs"}
                 </span>
-                <span>참고할 유튜브 뮤직비디오 / 음원 링크</span>
               </label>
-
               <button
                 type="button"
                 onClick={handleQuickFillArtistMVs}
-                className="text-xs font-bold text-pink-400 hover:text-pink-300 flex items-center gap-1 transition"
+                className="text-xs text-pink-400 hover:text-pink-300 font-medium"
               >
-                <Youtube className="w-3.5 h-3.5" />
-                <span>선택한 가수의 대표 MV 자동 불러오기</span>
+                {isKo ? "선택 가수 대표 MV 자동채우기" : "Auto-fill Artist MVs"}
               </button>
             </div>
 
             <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Youtube className="w-4 h-4 text-red-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={youtubeInput}
-                  onChange={(e) => setYoutubeInput(e.target.value)}
-                  placeholder="https://www.youtube.com/watch?v=... 링크를 붙여넣으세요"
-                  className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-black/50 border border-white/15 text-xs sm:text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-pink-500"
-                />
-              </div>
+              <input
+                type="text"
+                value={youtubeInput}
+                onChange={(e) => setYoutubeInput(e.target.value)}
+                placeholder={
+                  isKo ? "유튜브 링크 붙여넣기..." : "Paste YouTube URL..."
+                }
+                className="flex-1 px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-xs sm:text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-pink-500"
+              />
               <button
                 type="button"
                 onClick={() => handleAddYoutubeUrl()}
                 disabled={isFetchingYt || !youtubeInput.trim()}
-                className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 disabled:opacity-40 text-xs font-bold text-white flex items-center gap-1.5 transition shrink-0"
+                className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/15 disabled:opacity-40 text-xs font-semibold text-white flex items-center gap-1 transition shrink-0"
               >
                 {isFetchingYt ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
-                  <Plus className="w-4 h-4" />
+                  <Plus className="w-3.5 h-3.5" />
                 )}
-                <span>링크 추가</span>
+                <span>{isKo ? "추가" : "Add"}</span>
               </button>
             </div>
 
-            {/* Added YouTube Reference List */}
             {youtubeRefs.length > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {youtubeRefs.map((yt, idx) => (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {youtubeRefs.map((ref, idx) => (
                   <div
                     key={idx}
-                    className="flex items-center justify-between p-2.5 rounded-xl bg-black/40 border border-white/10"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-xs text-zinc-300 max-w-full"
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-8 h-8 rounded-lg bg-red-500/20 border border-red-500/30 flex items-center justify-center shrink-0">
-                        <Youtube className="w-4 h-4 text-red-400" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-white truncate">
-                          {yt.title}
-                        </p>
-                        <p className="text-[10px] text-zinc-400 truncate">
-                          {yt.url}
-                        </p>
-                      </div>
-                    </div>
+                    <Youtube className="w-3 h-3 text-red-400 shrink-0" />
+                    <span className="truncate max-w-[220px]">{ref.title}</span>
                     <button
                       type="button"
                       onClick={() =>
-                        setYoutubeRefs((prev) => prev.filter((_, i) => i !== idx))
+                        setYoutubeRefs((prev) =>
+                          prev.filter((_, i) => i !== idx)
+                        )
                       }
-                      className="p-1.5 text-zinc-500 hover:text-rose-400 transition"
+                      className="text-zinc-500 hover:text-red-400 shrink-0"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 className="w-3 h-3" />
                     </button>
                   </div>
                 ))}
@@ -455,153 +427,127 @@ export default function ComposeStudioModal({
             )}
           </div>
 
-          {/* STEP 3: GENRE, MOOD, BPM & CONCEPT PROMPT */}
-          <div className="space-y-4">
-            <label className="text-sm font-extrabold text-white flex items-center gap-2">
-              <span className="w-6 h-6 rounded-full bg-pink-500 text-white text-xs flex items-center justify-center font-bold">
-                3
-              </span>
-              <span>장르 · 무드 · 작곡 컨셉 디렉팅</span>
-            </label>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 mb-1.5">
-                  베이스 장르 (Genre)
-                </label>
-                <select
-                  value={selectedGenre}
-                  onChange={(e) => setSelectedGenre(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl bg-black/50 border border-white/15 text-xs sm:text-sm text-white focus:outline-none focus:border-pink-500"
-                >
-                  {KPOP_GENRES.map((g) => (
-                    <option key={g.id} value={g.id} className="bg-zinc-900">
-                      {g.name} ({g.id})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 mb-1.5">
-                  곡의 분위기 (Mood)
-                </label>
-                <select
-                  value={selectedMood}
-                  onChange={(e) => setSelectedMood(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl bg-black/50 border border-white/15 text-xs sm:text-sm text-white focus:outline-none focus:border-pink-500"
-                >
-                  {MOOD_PRESETS.map((m) => (
-                    <option key={m} value={m} className="bg-zinc-900">
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-zinc-400 mb-1.5">
-                  템포 (BPM): <span className="text-pink-400">{customBpm} BPM</span>
-                </label>
-                <input
-                  type="range"
-                  min={95}
-                  max={160}
-                  value={customBpm}
-                  onChange={(e) => setCustomBpm(Number(e.target.value))}
-                  className="w-full h-2 mt-2.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-pink-500"
-                />
-              </div>
+          {/* STEP 3: Genre, Mood & Tempo */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-zinc-300 mb-1.5">
+                {isKo ? "장르" : "Genre"}
+              </label>
+              <select
+                value={selectedGenre}
+                onChange={(e) => setSelectedGenre(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-white/10 text-xs sm:text-sm text-white focus:outline-none focus:border-pink-500"
+              >
+                {KPOP_GENRES.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {isKo ? g.name : g.id}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-zinc-400 mb-1.5">
-                작곡 프롬프트 / 원하는 곡 제목이나 테마 (선택)
+              <label className="block text-xs font-bold text-zinc-300 mb-1.5">
+                {isKo ? "분위기" : "Mood"}
               </label>
-              <input
-                type="text"
-                value={customPrompt}
-                onChange={(e) => setCustomPrompt(e.target.value)}
-                placeholder="예: 여름밤 한강 드라이브할 때 듣기 좋은 뉴진스x데이식스 청량 밴드 신곡 만들어줘!"
-                className="w-full px-4 py-2.5 rounded-xl bg-black/50 border border-white/15 text-xs sm:text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-pink-500"
-              />
+              <select
+                value={selectedMood}
+                onChange={(e) => setSelectedMood(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl bg-zinc-800 border border-white/10 text-xs sm:text-sm text-white focus:outline-none focus:border-pink-500"
+              >
+                {MOOD_PRESETS.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            {/* Optional Gemini API Key Input */}
-            <div className="pt-1">
-              <button
-                type="button"
-                onClick={() => setShowApiKeyField(!showApiKeyField)}
-                className="text-[11px] text-zinc-400 hover:text-zinc-200 flex items-center gap-1.5"
-              >
-                <KeyRound className="w-3.5 h-3.5 text-pink-400" />
-                <span>
-                  {showApiKeyField
-                    ? "Gemini API Key 입력창 닫기 (미입력 시 내장 K-POP AI 작곡 엔진 자동 구동)"
-                    : "Gemini API Key 직접 입력하기 (선택사항 — 미입력 시에도 즉시 생성 가능)"}
-                </span>
-              </button>
-              {showApiKeyField && (
-                <input
-                  type="password"
-                  value={geminiApiKey}
-                  onChange={(e) => setGeminiApiKey(e.target.value)}
-                  placeholder="AIzaSy... (Google AI Studio Gemini API Key)"
-                  className="mt-2 w-full px-3.5 py-2 rounded-xl bg-black/60 border border-white/15 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-pink-500"
-                />
-              )}
+            <div>
+              <label className="block text-xs font-bold text-zinc-300 mb-1.5">
+                {isKo ? `템포 (${customBpm} BPM)` : `Tempo (${customBpm} BPM)`}
+              </label>
+              <input
+                type="range"
+                min={85}
+                max={170}
+                value={customBpm}
+                onChange={(e) => setCustomBpm(parseInt(e.target.value, 10))}
+                className="w-full accent-pink-500 h-2 bg-white/15 rounded-lg cursor-pointer mt-2"
+              />
             </div>
           </div>
 
-          {/* Composing Progress Indicator */}
+          {/* Optional Concept Input */}
+          <div>
+            <input
+              type="text"
+              value={customPrompt}
+              onChange={(e) => setCustomPrompt(e.target.value)}
+              placeholder={
+                isKo
+                  ? "원하는 곡 컨셉 한 줄 입력 (선택, 예: 한밤중 서울 드라이브)"
+                  : "Optional concept note (e.g., Midnight drive in Seoul)"
+              }
+              className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-xs sm:text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-pink-500"
+            />
+          </div>
+
+          {/* Progress Status when Composing */}
           {isComposing && (
-            <div className="p-4 rounded-2xl bg-gradient-to-r from-pink-500/15 via-violet-500/15 to-sky-500/15 border border-pink-500/40 space-y-2">
-              <div className="flex items-center gap-2 text-sm font-extrabold text-white">
-                <Loader2 className="w-4 h-4 animate-spin text-pink-400" />
-                <span>AI 프로듀서가 새로운 K-POP 트랙을 작곡하고 있습니다...</span>
+            <div className="p-4 rounded-2xl bg-pink-500/10 border border-pink-500/30 space-y-2">
+              <div className="flex items-center gap-2.5 text-sm font-bold text-white">
+                <Loader2 className="w-4 h-4 text-pink-400 animate-spin shrink-0" />
+                <span>
+                  {composeStep === 1 &&
+                    (isKo
+                      ? "아티스트 스타일 및 MV 분석 중..."
+                      : "Analyzing artist style & MV...")}
+                  {composeStep === 2 &&
+                    (isKo
+                      ? "Gemini Lyria 사운드 & 가사 생성 중..."
+                      : "Generating Lyria audio & lyrics...")}
+                  {composeStep === 3 &&
+                    (isKo
+                      ? "가수 멤버별 AI 보컬 합성 중..."
+                      : "Synthesizing member vocals...")}
+                  {composeStep === 4 &&
+                    (isKo ? "마스터링 완료!" : "Mastering complete!")}
+                </span>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                <div className={`flex items-center gap-1.5 ${composeStep >= 1 ? "text-pink-300 font-bold" : "text-zinc-500"}`}>
-                  <Check className="w-3.5 h-3.5" />
-                  <span>1. 유튜브 MV & 음색 DNA 분석</span>
-                </div>
-                <div className={`flex items-center gap-1.5 ${composeStep >= 2 ? "text-violet-300 font-bold" : "text-zinc-500"}`}>
-                  <Check className="w-3.5 h-3.5" />
-                  <span>2. 콜라보 비트 & 신스 코드 배치</span>
-                </div>
-                <div className={`flex items-center gap-1.5 ${composeStep >= 3 ? "text-sky-300 font-bold" : "text-zinc-500"}`}>
-                  <Check className="w-3.5 h-3.5" />
-                  <span>3. 싱크 가사 & 앨범 커버 생성</span>
-                </div>
-              </div>
+              {vocalProgress && (
+                <p className="text-xs text-pink-200 font-mono">
+                  [{vocalProgress.section}] {vocalProgress.member} (
+                  {vocalProgress.ready}/{vocalProgress.total})
+                </p>
+              )}
             </div>
           )}
 
-          {/* Footer Submit Buttons */}
-          <div className="flex items-center justify-end gap-3 pt-2 border-t border-white/10">
+          {/* Submit Footer */}
+          <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-white/10">
             <button
               type="button"
               onClick={onClose}
+              disabled={isComposing}
               className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs sm:text-sm font-semibold text-zinc-300 transition"
             >
-              취소
+              {isKo ? "취소" : "Cancel"}
             </button>
             <button
               type="submit"
               disabled={isComposing}
-              className="px-6 py-3 rounded-xl bg-gradient-to-r from-pink-500 via-fuchsia-500 to-violet-600 hover:brightness-110 disabled:opacity-50 text-xs sm:text-sm font-extrabold text-white flex items-center gap-2 shadow-lg shadow-pink-500/30 transition"
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-violet-600 hover:from-pink-400 hover:to-violet-500 text-xs sm:text-sm font-bold text-white shadow-lg shadow-pink-500/25 flex items-center gap-2 transition disabled:opacity-50"
             >
               {isComposing ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>신곡 프로듀싱 중...</span>
+                  <span>{isKo ? "생성 중..." : "Composing..."}</span>
                 </>
               ) : (
                 <>
                   <Sparkles className="w-4 h-4" />
-                  <span>
-                    {isCollab ? "콜라보 생성 음악 작곡하기" : "생성 음악 작곡하기"}
-                  </span>
+                  <span>{isKo ? "생성 음악 작곡하기" : "Compose Track"}</span>
                 </>
               )}
             </button>
@@ -611,4 +557,3 @@ export default function ComposeStudioModal({
     </div>
   );
 }
-

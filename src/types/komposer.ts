@@ -38,7 +38,16 @@ export interface MusicalDNA {
   rootNote: number; // MIDI note for key root (e.g., 60 = C4)
   scale: "minor" | "major" | "dorian" | "phrygian";
   chordProgression: number[][]; // Array of 4 chords (semitone offsets from root)
-  melodyMotif: number[]; // Scale degree offsets for lead hook
+  melodyMotif: number[]; // Scale degree offsets for lead hook (-99 = rest)
+  verseMelody?: number[]; // 16-step verse melody (-99 = rest)
+  preChorusMelody?: number[]; // 16-step pre-chorus rising melody
+  chorusMelody?: number[]; // 16-step explosive chorus hook
+  bridgeMelody?: number[]; // 16-step emotional bridge melody
+  kickPattern?: number[]; // 16-step velocity pattern (0..1) for irregular artist rhythms
+  snarePattern?: number[]; // 16-step velocity pattern including ghost notes
+  hiHatPattern?: number[]; // 16-step velocity pattern (values > 1 trigger 32nd-note trap roll)
+  swingAmount?: number; // 0.0 to 0.35 micro-timing swing
+  beatSwitchMode?: "none" | "halftime_verse2" | "breakbeat_chorus" | "band_buildup" | "hyper_drop";
   bassGroove: "bouncy" | "sustained_808" | "driving_8th" | "syncopated_slap" | "garage_sub";
   drumDensity: number; // 0.5 to 1.0
   brightness: number; // 0.3 to 1.0
@@ -83,6 +92,8 @@ export interface Track {
   isLiked?: boolean;
   matchScore?: number;
   matchReasons?: string[];
+  audioUrl?: string;
+  lyriaModel?: string;
   createdAt: string;
 }
 

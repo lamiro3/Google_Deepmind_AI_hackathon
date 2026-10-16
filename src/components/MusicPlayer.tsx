@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Track } from "@/types/komposer";
 import { audioEngine } from "@/lib/audioEngine";
+import { Language } from "@/lib/i18n";
 import AlbumCover from "./AlbumCover";
 import {
   ChevronDown,
@@ -10,7 +11,6 @@ import {
   ExternalLink,
   Heart,
   ListMusic,
-  Maximize2,
   Mic2,
   Pause,
   Play,
@@ -33,6 +33,7 @@ interface MusicPlayerProps {
   onNextTrack: () => void;
   onPrevTrack: () => void;
   onToggleLike: (trackId: string) => void;
+  lang?: Language;
 }
 
 function formatTime(sec: number): string {
@@ -51,13 +52,15 @@ export default function MusicPlayer({
   onNextTrack,
   onPrevTrack,
   onToggleLike,
+  lang = "ko",
 }: MusicPlayerProps) {
+  const isKo = lang === "ko";
   const [engineState, setEngineState] = useState(() => audioEngine.getState());
-  const [freqBars, setFreqBars] = useState<number[]>(() => Array(24).fill(8));
   const [activeTab, setActiveTab] = useState<"lyrics" | "analysis" | "queue">("lyrics");
   const [copiedToast, setCopiedToast] = useState(false);
 
   const activeLyricRef = useRef<HTMLButtonElement | null>(null);
+  const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const unsub = audioEngine.subscribe(() => {
@@ -66,30 +69,19 @@ export default function MusicPlayer({
     return unsub;
   }, []);
 
-  // Animation loop for real-time audio spectrum bars
   useEffect(() => {
-    let rafId: number;
-    const updateSpectrum = () => {
-      if (audioEngine.getState().isPlaying) {
-        const data = audioEngine.getFrequencyData();
-        const bars: number[] = [];
-        for (let i = 0; i < 24; i++) {
-          const val = data[i] || 0;
-          bars.push(Math.max(8, Math.min(100, Math.round((val / 255) * 100))));
-        }
-        setFreqBars(bars);
-      } else {
-        setFreqBars((prev) => prev.map((v) => Math.max(8, Math.floor(v * 0.85))));
-      }
-      rafId = requestAnimationFrame(updateSpectrum);
-    };
-    rafId = requestAnimationFrame(updateSpectrum);
-    return () => cancelAnimationFrame(rafId);
-  }, []);
+    if (typeof document === "undefined") return;
+    if (isFullscreen) {
+      const prevOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      return () => {
+        document.body.style.overflow = prevOverflow;
+      };
+    }
+  }, [isFullscreen]);
 
   const track = currentTrack || engineState.currentTrack;
 
-  // Determine current active lyric index
   const activeLyricIndex = React.useMemo(() => {
     if (!track || !track.lyrics.length) return 0;
     let idx = 0;
@@ -104,466 +96,436 @@ export default function MusicPlayer({
   }, [track, engineState.currentTime]);
 
   useEffect(() => {
-    if (isFullscreen && activeTab === "lyrics" && activeLyricRef.current) {
-      activeLyricRef.current.scrollIntoView({
+    if (
+      isFullscreen &&
+      activeTab === "lyrics" &&
+      lyricsContainerRef.current &&
+      activeLyricRef.current
+    ) {
+      const container = lyricsContainerRef.current;
+      const activeEl = activeLyricRef.current;
+      const containerRect = container.getBoundingClientRect();
+      const activeRect = activeEl.getBoundingClientRect();
+      const offsetWithinContainer =
+        activeRect.top - containerRect.top + container.scrollTop;
+      const targetScrollTop =
+        offsetWithinContainer -
+        container.clientHeight / 2 +
+        activeRect.height / 2;
+      const maxScrollTop = Math.max(
+        0,
+        container.scrollHeight - container.clientHeight
+      );
+      container.scrollTo({
+        top: Math.max(0, Math.min(maxScrollTop, targetScrollTop)),
         behavior: "smooth",
-        block: "center",
       });
     }
   }, [activeLyricIndex, isFullscreen, activeTab]);
 
   if (!track) return null;
 
-  const currentLyric = track.lyrics[activeLyricIndex] || track.lyrics[0];
+  const isPlaying =
+    engineState.isPlaying && engineState.currentTrack?.id === track.id;
+  const duration = engineState.duration || track.duration || 36;
+  const currentTime =
+    engineState.currentTrack?.id === track.id ? engineState.currentTime : 0;
   const progressPercent =
-    track.duration > 0
-      ? Math.min(100, (engineState.currentTime / track.duration) * 100)
-      : 0;
+    duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
 
-  const handleShare = () => {
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(
-        `[Komposer] ${track.title} - ${track.artistNames.join(" × ")} 스타일 AI 생성곡 들어보세요!`
-      );
-      setCopiedToast(true);
-      setTimeout(() => setCopiedToast(false), 2200);
+  const handlePlayPause = () => {
+    if (engineState.currentTrack?.id !== track.id) {
+      audioEngine.loadTrack(track, true);
+    } else {
+      audioEngine.togglePlay();
     }
   };
 
+  const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newTime = parseFloat(e.target.value);
+    if (engineState.currentTrack?.id !== track.id) {
+      audioEngine.loadTrack(track, true);
+    }
+    audioEngine.seek(newTime);
+  };
+
+  const handleShare = () => {
+    if (typeof window !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(window.location.href);
+      setCopiedToast(true);
+      setTimeout(() => setCopiedToast(false), 2000);
+    }
+  };
+
+  const artistLabel = (track.artistNames || track.artists).join(" × ");
+
   return (
     <>
-      {/* 1. FULLSCREEN EXPANDABLE MUSIC APP VIEW */}
+      {/* FULLSCREEN OVERLAY */}
       {isFullscreen && (
-        <div className="fixed inset-0 z-50 bg-zinc-950/95 backdrop-blur-3xl text-white flex flex-col overflow-hidden animate-in fade-in duration-200">
-          {/* Dynamic Ambient Album Color Glow */}
+        <div className="fixed inset-0 h-[100dvh] max-h-[100dvh] z-50 bg-zinc-950/95 backdrop-blur-2xl text-white flex flex-col overflow-hidden animate-in fade-in duration-200">
+          {/* Dynamic Ambient Glow */}
           <div
-            className="absolute -top-32 -left-32 w-[34rem] h-[34rem] rounded-full blur-[130px] opacity-35 pointer-events-none"
+            className="pointer-events-none absolute -top-36 -left-36 w-[28rem] h-[28rem] rounded-full blur-3xl opacity-25"
             style={{ background: track.coverConfig.gradientFrom }}
           />
           <div
-            className="absolute -bottom-32 -right-32 w-[34rem] h-[34rem] rounded-full blur-[130px] opacity-35 pointer-events-none"
+            className="pointer-events-none absolute -bottom-36 -right-36 w-[28rem] h-[28rem] rounded-full blur-3xl opacity-25"
             style={{ background: track.coverConfig.gradientTo }}
           />
 
-          {/* Top Header Bar */}
-          <div className="relative z-10 flex items-center justify-between px-4 sm:px-8 py-4 border-b border-white/10">
+          {/* Top Bar */}
+          <div className="shrink-0 relative z-20 flex items-center justify-between px-4 sm:px-8 py-4 border-b border-white/10 bg-zinc-950/80 backdrop-blur-md">
             <button
               onClick={() => onToggleFullscreen(false)}
-              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full bg-white/10 hover:bg-white/15 text-sm font-medium transition"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs sm:text-sm font-medium transition shrink-0"
             >
               <ChevronDown className="w-4 h-4" />
-              <span>미니 플레이어로 축소</span>
+              <span>{isKo ? "접기" : "Minimize"}</span>
             </button>
 
-            <div className="text-center hidden sm:block">
-              <p className="text-[11px] uppercase tracking-[0.2em] text-pink-400 font-bold">
-                KOMPOSER AI STREAMING PLAYER
-              </p>
-              <p className="text-xs text-zinc-400">
-                {track.isCollab ? "드림 콜라보 AI 생성 트랙" : "아티스트 시그니처 AI 트랙"} ·{" "}
-                {track.bpm} BPM · {track.musicalKey}
-              </p>
+            <div className="flex items-center gap-2 min-w-0 px-3">
+              <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse shrink-0" />
+              <span className="text-xs font-semibold text-zinc-300 truncate">
+                {track.title} — {artistLabel}
+              </span>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <button
                 onClick={handleShare}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-full bg-white/10 hover:bg-white/15 text-xs font-medium transition"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-medium transition"
               >
                 <Share2 className="w-3.5 h-3.5" />
-                <span>{copiedToast ? "공유 문구 복사됨!" : "트랙 공유"}</span>
+                <span className="hidden sm:inline">
+                  {copiedToast
+                    ? isKo
+                      ? "복사됨!"
+                      : "Copied!"
+                    : isKo
+                      ? "공유"
+                      : "Share"}
+                </span>
               </button>
             </div>
           </div>
 
-          {/* Main Fullscreen Body */}
-          <div className="relative z-10 flex-1 overflow-y-auto px-4 sm:px-8 py-6 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-            {/* Left Column: Album Art + Spectrum + Transport Controls */}
-            <div className="lg:col-span-5 flex flex-col items-center text-center">
+          {/* Main Content Grid */}
+          <div className="relative z-10 flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-6 p-4 sm:p-8 overflow-y-auto lg:overflow-hidden">
+            {/* Left Column: Cover + Controls */}
+            <div className="lg:col-span-5 flex flex-col items-center justify-center gap-5 min-h-0">
               <AlbumCover
                 config={track.coverConfig}
                 title={track.title}
                 isCollab={track.isCollab}
-                isPlaying={engineState.isPlaying}
                 size="lg"
-                className="mb-6 shadow-2xl shadow-pink-500/20"
+                isPlaying={isPlaying}
               />
 
-              <div className="flex flex-wrap items-center justify-center gap-1.5 mb-2">
-                {track.isCollab && (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-gradient-to-r from-pink-500 to-violet-500 text-white">
-                    <Sparkles className="w-3 h-3" />
-                    COLLAB {track.collabRatio}:{100 - track.collabRatio}
-                  </span>
-                )}
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-white/10 text-zinc-200">
-                  {track.genre}
-                </span>
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-white/10 text-zinc-300">
-                  {track.bpm} BPM · {track.musicalKey}
-                </span>
+              {/* Track Title & Artist */}
+              <div className="text-center max-w-md w-full px-2">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/10 text-zinc-300 text-[11px] font-medium mb-2">
+                  <span>{track.genre}</span>
+                  <span>·</span>
+                  <span>{track.bpm} BPM</span>
+                </div>
+                <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight text-white truncate">
+                  {track.title}
+                </h2>
+                <p className="text-sm text-zinc-400 mt-1 truncate">
+                  {artistLabel}
+                </p>
               </div>
 
-              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white mb-1">
-                {track.title}
-              </h2>
-              <p className="text-sm sm:text-base text-pink-300 font-medium mb-1">
-                {track.artistNames.join(" × ")} Style
-              </p>
-              <p className="text-xs text-zinc-400 mb-5">
-                작곡가(Producer): <span className="text-zinc-200 font-semibold">{track.creatorName}</span> ({track.creatorHandle})
-              </p>
-
-              {/* Real-time 24-Bar Audio Spectrum Visualizer */}
-              <div className="w-full max-w-md h-12 flex items-end justify-center gap-1 px-4 mb-4">
-                {freqBars.map((height, idx) => (
-                  <div
-                    key={idx}
-                    className="flex-1 rounded-full transition-all duration-75"
-                    style={{
-                      height: `${height}%`,
-                      background:
-                        idx % 2 === 0
-                          ? track.coverConfig.gradientFrom
-                          : track.coverConfig.accentColor,
-                      opacity: engineState.isPlaying ? 0.9 : 0.3,
-                    }}
-                  />
-                ))}
-              </div>
-
-              {/* Progress Scrubber */}
-              <div className="w-full max-w-md mb-4">
+              {/* Progress Bar */}
+              <div className="w-full max-w-md space-y-1.5 px-2">
                 <input
                   type="range"
                   min={0}
-                  max={track.duration}
-                  step={0.2}
-                  value={engineState.currentTime}
-                  onChange={(e) => audioEngine.seek(Number(e.target.value))}
-                  className="w-full h-2 bg-white/15 rounded-lg appearance-none cursor-pointer accent-pink-500"
+                  max={duration}
+                  step={0.1}
+                  value={currentTime}
+                  onChange={handleSeekChange}
+                  className="w-full accent-pink-500 h-1.5 bg-white/15 rounded-lg cursor-pointer"
                 />
-                <div className="flex justify-between text-xs text-zinc-400 mt-1.5 font-mono">
-                  <span>{formatTime(engineState.currentTime)}</span>
-                  <span className="text-pink-400 font-semibold">
-                    {currentLyric?.section || "PLAYING"}
-                  </span>
-                  <span>{formatTime(track.duration)}</span>
+                <div className="flex justify-between text-xs text-zinc-400 font-mono">
+                  <span>{formatTime(currentTime)}</span>
+                  <span>{formatTime(duration)}</span>
                 </div>
               </div>
 
-              {/* Fullscreen Transport Buttons */}
-              <div className="flex items-center justify-center gap-5">
+              {/* Transport Controls */}
+              <div className="flex items-center justify-center gap-4 sm:gap-6">
                 <button
-                  onClick={() => audioEngine.toggleRepeat()}
-                  className={`p-2.5 rounded-full transition ${
-                    engineState.isRepeat
-                      ? "bg-pink-500/20 text-pink-400 border border-pink-500/40"
-                      : "text-zinc-400 hover:text-white hover:bg-white/10"
+                  onClick={() => onToggleLike(track.id)}
+                  className={`p-2.5 rounded-full border transition ${
+                    track.isLiked
+                      ? "bg-pink-500/20 border-pink-500/50 text-pink-400"
+                      : "bg-white/5 border-white/10 text-zinc-400 hover:text-white"
                   }`}
-                  title="한 곡 반복"
+                  title={isKo ? "좋아요" : "Like"}
                 >
-                  <Repeat className="w-5 h-5" />
+                  <Heart
+                    className={`w-5 h-5 ${track.isLiked ? "fill-pink-500" : ""}`}
+                  />
                 </button>
 
                 <button
                   onClick={onPrevTrack}
-                  className="p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition"
-                  title="이전 곡"
+                  className="p-2.5 rounded-full bg-white/5 hover:bg-white/10 text-white transition"
+                  title={isKo ? "이전 곡" : "Previous"}
                 >
                   <SkipBack className="w-5 h-5" />
                 </button>
 
                 <button
-                  onClick={() => audioEngine.togglePlay()}
-                  className="w-16 h-16 rounded-full bg-gradient-to-r from-pink-500 via-fuchsia-500 to-violet-600 hover:scale-105 active:scale-95 text-white flex items-center justify-center shadow-lg shadow-pink-500/30 transition"
+                  onClick={handlePlayPause}
+                  className="w-14 h-14 rounded-full bg-gradient-to-tr from-pink-500 to-violet-500 text-white flex items-center justify-center shadow-lg shadow-pink-500/25 hover:scale-105 transition"
                 >
-                  {engineState.isPlaying ? (
-                    <Pause className="w-7 h-7 fill-current" />
+                  {isPlaying ? (
+                    <Pause className="w-6 h-6 fill-white" />
                   ) : (
-                    <Play className="w-7 h-7 fill-current ml-0.5" />
+                    <Play className="w-6 h-6 fill-white ml-0.5" />
                   )}
                 </button>
 
                 <button
                   onClick={onNextTrack}
-                  className="p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition"
-                  title="다음 곡"
+                  className="p-2.5 rounded-full bg-white/5 hover:bg-white/10 text-white transition"
+                  title={isKo ? "다음 곡" : "Next"}
                 >
                   <SkipForward className="w-5 h-5" />
                 </button>
 
                 <button
-                  onClick={() => onToggleLike(track.id)}
-                  className={`p-2.5 rounded-full transition ${
-                    track.isLiked
-                      ? "bg-rose-500/20 text-rose-400 border border-rose-500/40"
-                      : "text-zinc-400 hover:text-white hover:bg-white/10"
+                  onClick={() => audioEngine.toggleRepeat()}
+                  className={`p-2.5 rounded-full border transition ${
+                    engineState.isRepeat
+                      ? "bg-violet-500/20 border-violet-500/50 text-violet-300"
+                      : "bg-white/5 border-white/10 text-zinc-400 hover:text-white"
                   }`}
-                  title="좋아요"
+                  title={isKo ? "반복 재생" : "Loop"}
                 >
-                  <Heart className={`w-5 h-5 ${track.isLiked ? "fill-current" : ""}`} />
+                  <Repeat className="w-5 h-5" />
                 </button>
               </div>
             </div>
 
-            {/* Right Column: Tabs for Synced Lyrics / AI Style & YouTube Reference / Queue */}
-            <div className="lg:col-span-7 flex flex-col h-[500px] sm:h-[560px] bg-white/5 border border-white/10 rounded-3xl overflow-hidden backdrop-blur-xl">
-              {/* Tab Selector */}
-              <div className="flex items-center border-b border-white/10 p-2 gap-2 bg-black/20">
+            {/* Right Column: Clean 3-Tab Panel */}
+            <div className="lg:col-span-7 flex flex-col bg-white/[0.03] border border-white/10 rounded-2xl overflow-hidden min-h-[300px] max-h-[55vh] lg:max-h-full lg:min-h-0 lg:h-full">
+              {/* Tab Bar */}
+              <div className="shrink-0 flex border-b border-white/10 bg-black/20 p-1.5 gap-1.5">
                 <button
                   onClick={() => setActiveTab("lyrics")}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-2xl text-xs sm:text-sm font-bold transition ${
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition ${
                     activeTab === "lyrics"
-                      ? "bg-gradient-to-r from-pink-500/90 to-violet-600/90 text-white shadow"
-                      : "text-zinc-400 hover:text-white hover:bg-white/5"
+                      ? "bg-white/10 text-white"
+                      : "text-zinc-400 hover:text-white"
                   }`}
                 >
-                  <Mic2 className="w-4 h-4" />
-                  <span>실시간 싱크 가사 & 파트</span>
+                  <Mic2 className="w-4 h-4 text-pink-400" />
+                  <span>{isKo ? "가사" : "Lyrics"}</span>
                 </button>
                 <button
                   onClick={() => setActiveTab("analysis")}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-2xl text-xs sm:text-sm font-bold transition ${
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition ${
                     activeTab === "analysis"
-                      ? "bg-gradient-to-r from-pink-500/90 to-violet-600/90 text-white shadow"
-                      : "text-zinc-400 hover:text-white hover:bg-white/5"
+                      ? "bg-white/10 text-white"
+                      : "text-zinc-400 hover:text-white"
                   }`}
                 >
-                  <Sparkles className="w-4 h-4" />
-                  <span>AI 스타일 분석 & 원곡 MV</span>
+                  <Sparkles className="w-4 h-4 text-violet-400" />
+                  <span>{isKo ? "곡 정보" : "Track Info"}</span>
                 </button>
                 <button
                   onClick={() => setActiveTab("queue")}
-                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-2xl text-xs sm:text-sm font-bold transition ${
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition ${
                     activeTab === "queue"
-                      ? "bg-gradient-to-r from-pink-500/90 to-violet-600/90 text-white shadow"
-                      : "text-zinc-400 hover:text-white hover:bg-white/5"
+                      ? "bg-white/10 text-white"
+                      : "text-zinc-400 hover:text-white"
                   }`}
                 >
-                  <ListMusic className="w-4 h-4" />
-                  <span>재생목록 ({queue.length})</span>
+                  <ListMusic className="w-4 h-4 text-cyan-400" />
+                  <span>
+                    {isKo ? `재생목록 (${queue.length})` : `Queue (${queue.length})`}
+                  </span>
                 </button>
               </div>
 
-              {/* Tab Content 1: Time-Synced Lyrics */}
-              {activeTab === "lyrics" && (
-                <div className="flex-1 overflow-y-auto p-5 sm:p-7 space-y-3">
-                  <div className="flex items-center justify-between text-xs text-zinc-400 pb-2 border-b border-white/10">
-                    <span>가사를 클릭하면 해당 파트로 즉시 이동합니다</span>
-                    <span className="text-pink-400 font-semibold">
-                      {track.isCollab ? "콜라보 보컬 파트 분배 적용됨" : "솔로 시그니처 보컬"}
-                    </span>
-                  </div>
-
-                  {track.lyrics.map((line, index) => {
-                    const isActive = index === activeLyricIndex;
-                    const isCollabPart = line.vocal.toLowerCase().includes("collab") || line.vocal.toLowerCase().includes("harmony");
-
-                    return (
-                      <button
-                        key={index}
-                        ref={isActive ? activeLyricRef : null}
-                        onClick={() => {
-                          audioEngine.seek(line.time);
-                          if (!engineState.isPlaying) audioEngine.play();
-                        }}
-                        className={`w-full text-left p-4 rounded-2xl transition-all duration-200 border ${
-                          isActive
-                            ? "bg-gradient-to-r from-pink-500/20 via-violet-500/20 to-transparent border-pink-500/50 scale-[1.01] shadow-lg"
-                            : "bg-white/[0.02] border-transparent hover:bg-white/[0.06] opacity-65 hover:opacity-95"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2 mb-1.5">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-white/10 text-zinc-300 tracking-wider">
-                              {line.section}
-                            </span>
-                            <span
-                              className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
-                                isCollabPart
-                                  ? "bg-gradient-to-r from-pink-500 to-violet-500 text-white"
-                                  : index % 2 === 0
-                                    ? "bg-sky-500/25 text-sky-300 border border-sky-400/30"
-                                    : "bg-fuchsia-500/25 text-fuchsia-300 border border-fuchsia-400/30"
-                              }`}
-                            >
-                              🎤 {line.vocal}
-                            </span>
-                          </div>
-                          <span className="text-xs font-mono text-zinc-400">
-                            {formatTime(line.time)}
-                          </span>
-                        </div>
-
-                        <p
-                          className={`text-base sm:text-xl font-bold leading-snug ${
-                            isActive ? "text-white" : "text-zinc-300"
+              {/* Tab Content */}
+              <div
+                ref={lyricsContainerRef}
+                className="relative flex-1 min-h-0 overflow-y-auto p-4 sm:p-6"
+              >
+                {activeTab === "lyrics" && (
+                  <div className="space-y-2.5 pb-6">
+                    {track.lyrics.map((line, i) => {
+                      const isActive = i === activeLyricIndex;
+                      return (
+                        <button
+                          key={i}
+                          ref={isActive ? activeLyricRef : null}
+                          onClick={() => {
+                            if (engineState.currentTrack?.id !== track.id) {
+                              audioEngine.loadTrack(track, true);
+                            }
+                            audioEngine.seek(line.time);
+                          }}
+                          className={`w-full text-left p-3.5 rounded-xl transition-all border ${
+                            isActive
+                              ? "bg-white/10 border-pink-500/40 text-white shadow-sm"
+                              : "bg-transparent border-transparent text-zinc-400 hover:bg-white/5 hover:text-zinc-200"
                           }`}
                         >
-                          {line.line}
-                        </p>
-                        {line.subline && (
+                          <div className="flex items-center justify-between text-[11px] mb-1">
+                            <span
+                              className={`font-semibold ${
+                                isActive ? "text-pink-300" : "text-zinc-500"
+                              }`}
+                            >
+                              [{line.section}] {line.vocal}
+                            </span>
+                            <span className="font-mono text-zinc-500">
+                              {formatTime(line.time)}
+                            </span>
+                          </div>
                           <p
-                            className={`text-xs sm:text-sm mt-1 ${
-                              isActive ? "text-pink-300" : "text-zinc-500"
+                            className={`font-bold leading-snug ${
+                              isActive ? "text-base sm:text-lg text-white" : "text-sm"
                             }`}
                           >
-                            {line.subline}
+                            {line.line}
                           </p>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Tab Content 2: AI Style Analysis & YouTube Reference */}
-              {activeTab === "analysis" && (
-                <div className="flex-1 overflow-y-auto p-6 space-y-5">
-                  <div className="p-5 rounded-2xl bg-gradient-to-br from-pink-500/15 via-violet-500/10 to-transparent border border-pink-500/30">
-                    <h4 className="text-xs font-extrabold uppercase tracking-wider text-pink-400 mb-2 flex items-center gap-1.5">
-                      <Sparkles className="w-4 h-4" />
-                      AI 작곡 프로듀싱 노트 (Style Analysis)
-                    </h4>
-                    <p className="text-sm sm:text-base text-zinc-100 leading-relaxed">
-                      {track.styleAnalysis}
-                    </p>
+                        </button>
+                      );
+                    })}
                   </div>
+                )}
 
-                  <div className="p-5 rounded-2xl bg-white/5 border border-white/10">
-                    <h4 className="text-xs font-extrabold uppercase tracking-wider text-violet-400 mb-2">
-                      콜라보 킬링 파트 & 보컬 디렉팅
-                    </h4>
-                    <p className="text-sm text-zinc-200 leading-relaxed">
-                      {track.collabPoint}
-                    </p>
-                    {track.isCollab && (
-                      <div className="mt-4">
-                        <div className="flex justify-between text-xs font-bold text-zinc-300 mb-1.5">
-                          <span>{track.artistNames[0]} ({track.collabRatio}%)</span>
-                          <span>{track.artistNames[1]} ({100 - track.collabRatio}%)</span>
-                        </div>
-                        <div className="w-full h-2.5 rounded-full bg-white/10 overflow-hidden flex">
-                          <div
-                            className="bg-pink-500 h-full"
-                            style={{ width: `${track.collabRatio}%` }}
-                          />
-                          <div
-                            className="bg-violet-500 h-full"
-                            style={{ width: `${100 - track.collabRatio}%` }}
-                          />
+                {activeTab === "analysis" && (
+                  <div className="space-y-4">
+                    <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-pink-400 mb-1.5">
+                        {isKo ? "AI 작곡 스타일 요약" : "AI Style Summary"}
+                      </h4>
+                      <p className="text-sm text-zinc-200 leading-relaxed">
+                        {track.styleAnalysis}
+                      </p>
+                    </div>
+
+                    {track.collabPoint && (
+                      <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-violet-400 mb-1.5">
+                          {isKo ? "콜라보 / 편곡 포인트" : "Collab & Arrangement Point"}
+                        </h4>
+                        <p className="text-sm text-zinc-200 leading-relaxed">
+                          {track.collabPoint}
+                        </p>
+                      </div>
+                    )}
+
+                    {track.youtubeRefs && track.youtubeRefs.length > 0 && (
+                      <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-red-400 mb-2.5 flex items-center gap-1.5">
+                          <Youtube className="w-4 h-4" />
+                          <span>
+                            {isKo ? "참고 유튜브 뮤직비디오" : "Reference YouTube MVs"}
+                          </span>
+                        </h4>
+                        <div className="space-y-2">
+                          {track.youtubeRefs.map((ref, idx) => (
+                            <a
+                              key={idx}
+                              href={ref.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex items-center justify-between p-2.5 rounded-lg bg-black/30 hover:bg-white/10 border border-white/5 transition text-xs"
+                            >
+                              <span className="font-medium text-zinc-200 truncate pr-2">
+                                {ref.title}
+                              </span>
+                              <ExternalLink className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                            </a>
+                          ))}
                         </div>
                       </div>
                     )}
                   </div>
+                )}
 
-                  {/* YouTube Reference Links */}
-                  <div className="p-5 rounded-2xl bg-white/5 border border-white/10">
-                    <h4 className="text-xs font-extrabold uppercase tracking-wider text-red-400 mb-3 flex items-center gap-1.5">
-                      <Youtube className="w-4 h-4" />
-                      스타일 학습에 사용된 유튜브 MV / 음원 레퍼런스
-                    </h4>
-                    {track.youtubeRefs && track.youtubeRefs.length > 0 ? (
-                      <div className="space-y-2.5">
-                        {track.youtubeRefs.map((yt, idx) => (
-                          <a
-                            key={idx}
-                            href={yt.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="flex items-center justify-between p-3 rounded-xl bg-black/40 hover:bg-black/60 border border-white/10 transition group"
-                          >
-                            <div className="min-w-0 pr-3">
-                              <p className="text-sm font-semibold text-white truncate group-hover:text-pink-400 transition">
-                                {yt.title}
+                {activeTab === "queue" && (
+                  <div className="space-y-1.5">
+                    {queue.map((item, idx) => {
+                      const isCurrent = item.id === track.id;
+                      return (
+                        <div
+                          key={item.id}
+                          onClick={() => onSelectTrack(item)}
+                          className={`flex items-center justify-between p-2.5 rounded-xl cursor-pointer transition ${
+                            isCurrent
+                              ? "bg-pink-500/15 border border-pink-500/30"
+                              : "hover:bg-white/5 border border-transparent"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className="text-xs font-mono text-zinc-500 w-4 text-center shrink-0">
+                              {idx + 1}
+                            </span>
+                            <AlbumCover
+                              config={item.coverConfig}
+                              title={item.title}
+                              isCollab={item.isCollab}
+                              size="sm"
+                            />
+                            <div className="min-w-0">
+                              <p
+                                className={`text-sm font-bold truncate ${
+                                  isCurrent ? "text-pink-300" : "text-white"
+                                }`}
+                              >
+                                {item.title}
                               </p>
                               <p className="text-xs text-zinc-400 truncate">
-                                {yt.author || yt.url}
+                                {(item.artistNames || item.artists).join(" × ")}
                               </p>
                             </div>
-                            <ExternalLink className="w-4 h-4 text-zinc-400 group-hover:text-white shrink-0" />
-                          </a>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-zinc-400">
-                        아티스트 대표곡 음원 데이터를 기반으로 생성되었습니다.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Tab Content 3: Play Queue */}
-              {activeTab === "queue" && (
-                <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                  {queue.map((item, idx) => {
-                    const isCurrent = item.id === track.id;
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => onSelectTrack(item)}
-                        className={`flex items-center justify-between p-3 rounded-2xl cursor-pointer transition ${
-                          isCurrent
-                            ? "bg-pink-500/20 border border-pink-500/40"
-                            : "hover:bg-white/5 border border-transparent"
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <span className="text-xs font-mono text-zinc-500 w-5 text-center">
-                            {idx + 1}
-                          </span>
-                          <AlbumCover
-                            config={item.coverConfig}
-                            title={item.title}
-                            size="xs"
-                            isPlaying={isCurrent && engineState.isPlaying}
-                          />
-                          <div className="min-w-0">
-                            <p className="text-sm font-bold text-white truncate">
-                              {item.title}
-                            </p>
-                            <p className="text-xs text-zinc-400 truncate">
-                              {item.artistNames.join(" × ")}
-                            </p>
                           </div>
+                          <span className="text-xs text-zinc-500 font-mono shrink-0 ml-2">
+                            {formatTime(item.duration)}
+                          </span>
                         </div>
-                        <span className="text-xs text-zinc-400 font-mono ml-2">
-                          {formatTime(item.duration)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* 2. PERSISTENT DOCKED MINI PLAYER (항상 화면 하단에 상시 표시) */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 bg-zinc-950/90 backdrop-blur-2xl border-t border-white/15 shadow-2xl">
-        {/* Top Interactive Seek Bar */}
-        <div className="relative w-full h-1.5 bg-white/10 group cursor-pointer">
+      {/* PERSISTENT BOTTOM MINI-PLAYER BAR */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-zinc-950/95 backdrop-blur-xl border-t border-white/10 text-white shadow-2xl">
+        {/* Top slim progress bar */}
+        <div className="relative w-full h-1 bg-white/10">
           <div
-            className="h-full bg-gradient-to-r from-pink-500 via-fuchsia-500 to-violet-500 transition-all duration-100"
+            className="h-full bg-gradient-to-r from-pink-500 via-violet-500 to-cyan-400 transition-all duration-150"
             style={{ width: `${progressPercent}%` }}
           />
           <input
             type="range"
             min={0}
-            max={track.duration}
-            step={0.2}
-            value={engineState.currentTime}
-            onChange={(e) => audioEngine.seek(Number(e.target.value))}
-            aria-label="Seek time"
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            max={duration}
+            step={0.1}
+            value={currentTime}
+            onChange={handleSeekChange}
+            aria-label="Seek timeline"
+            className="absolute inset-0 w-full h-3 -top-1 opacity-0 cursor-pointer"
           />
         </div>
 
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2.5 flex items-center justify-between gap-3">
-          {/* Left: Track Info & Click to Expand */}
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 sm:h-20 flex items-center justify-between gap-3">
+          {/* Left: Track Info */}
           <div
             onClick={() => onToggleFullscreen(true)}
             className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer group"
@@ -572,103 +534,76 @@ export default function MusicPlayer({
               config={track.coverConfig}
               title={track.title}
               isCollab={track.isCollab}
-              isPlaying={engineState.isPlaying}
               size="sm"
-              className="shrink-0 group-hover:scale-105 transition"
+              isPlaying={isPlaying}
             />
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <p className="text-sm font-extrabold text-white truncate group-hover:text-pink-400 transition">
-                  {track.title}
-                </p>
-                {track.isCollab && (
-                  <span className="hidden sm:inline-flex px-1.5 py-0.5 text-[9px] font-extrabold rounded bg-pink-500/20 text-pink-300 border border-pink-500/30 shrink-0">
-                    COLLAB
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-zinc-400 truncate">
-                {track.artistNames.join(" × ")}
+              <p className="font-bold text-sm text-white truncate group-hover:text-pink-300 transition">
+                {track.title}
               </p>
-              {/* Live Mini Synced Lyric Line Ticker */}
-              {currentLyric && (
-                <p className="text-[11px] text-pink-300/90 truncate mt-0.5 font-medium">
-                  ♪ [{currentLyric.vocal}] {currentLyric.line}
-                </p>
-              )}
+              <p className="text-xs text-zinc-400 truncate">{artistLabel}</p>
             </div>
           </div>
 
           {/* Center: Transport Controls */}
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-4 shrink-0">
             <button
               onClick={onPrevTrack}
               className="p-2 rounded-full text-zinc-300 hover:text-white hover:bg-white/10 transition"
-              title="이전 곡"
+              title={isKo ? "이전 곡" : "Previous"}
             >
               <SkipBack className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
 
             <button
-              onClick={() => audioEngine.togglePlay()}
-              className="w-11 h-11 rounded-full bg-gradient-to-r from-pink-500 to-violet-600 hover:brightness-110 text-white flex items-center justify-center shadow-md shadow-pink-500/25 transition"
-              title={engineState.isPlaying ? "일시정지" : "재생"}
+              onClick={handlePlayPause}
+              className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-white text-zinc-950 flex items-center justify-center shadow-md hover:scale-105 transition"
+              title={isPlaying ? (isKo ? "일시정지" : "Pause") : isKo ? "재생" : "Play"}
             >
-              {engineState.isPlaying ? (
-                <Pause className="w-5 h-5 fill-current" />
+              {isPlaying ? (
+                <Pause className="w-4 h-4 sm:w-5 sm:h-5 fill-zinc-950" />
               ) : (
-                <Play className="w-5 h-5 fill-current ml-0.5" />
+                <Play className="w-4 h-4 sm:w-5 sm:h-5 fill-zinc-950 ml-0.5" />
               )}
             </button>
 
             <button
               onClick={onNextTrack}
               className="p-2 rounded-full text-zinc-300 hover:text-white hover:bg-white/10 transition"
-              title="다음 곡"
+              title={isKo ? "다음 곡" : "Next"}
             >
               <SkipForward className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
 
-            <span className="hidden md:inline-block text-xs font-mono text-zinc-400 pl-1">
-              {formatTime(engineState.currentTime)} / {formatTime(track.duration)}
+            <span className="hidden md:inline-block text-xs font-mono text-zinc-400 min-w-[72px] text-center">
+              {formatTime(currentTime)} / {formatTime(duration)}
             </span>
           </div>
 
-          {/* Right: Like, Volume, Fullscreen Toggle */}
-          <div className="flex items-center justify-end gap-2 sm:gap-3 flex-1">
-            {/* Mini Visualizer Indicator */}
-            <div className="hidden lg:flex items-end gap-0.5 h-6 px-2">
-              {freqBars.slice(0, 8).map((h, i) => (
-                <div
-                  key={i}
-                  className="w-1 rounded-full bg-pink-400 transition-all duration-75"
-                  style={{
-                    height: `${Math.max(15, h * 0.7)}%`,
-                    opacity: engineState.isPlaying ? 0.9 : 0.3,
-                  }}
-                />
-              ))}
-            </div>
-
+          {/* Right: Like, Volume & Expand */}
+          <div className="flex items-center justify-end gap-2 sm:gap-3 flex-1 shrink-0">
             <button
               onClick={() => onToggleLike(track.id)}
-              className={`p-2 rounded-full transition ${
+              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-medium border transition ${
                 track.isLiked
-                  ? "text-rose-400 bg-rose-500/15"
-                  : "text-zinc-400 hover:text-white hover:bg-white/10"
+                  ? "bg-pink-500/20 border-pink-500/40 text-pink-300"
+                  : "bg-white/5 border-white/10 text-zinc-400 hover:text-white"
               }`}
-              title="좋아요"
             >
-              <Heart className={`w-4 h-4 sm:w-5 sm:h-5 ${track.isLiked ? "fill-current" : ""}`} />
+              <Heart
+                className={`w-3.5 h-3.5 ${track.isLiked ? "fill-pink-500 text-pink-500" : ""}`}
+              />
+              <span className="hidden sm:inline">{track.likesCount}</span>
             </button>
 
-            {/* Volume Control */}
-            <div className="hidden sm:flex items-center gap-1.5">
+            <div className="hidden lg:flex items-center gap-1.5">
               <button
-                onClick={() => audioEngine.toggleMute()}
-                className="p-1.5 text-zinc-400 hover:text-white transition"
+                onClick={() =>
+                  audioEngine.setVolume(engineState.volume > 0 ? 0 : 0.85)
+                }
+                className="text-zinc-400 hover:text-white p-1"
               >
-                {engineState.isMuted || engineState.volume === 0 ? (
+                {engineState.volume === 0 ? (
                   <VolumeX className="w-4 h-4" />
                 ) : (
                   <Volume2 className="w-4 h-4" />
@@ -678,29 +613,24 @@ export default function MusicPlayer({
                 type="range"
                 min={0}
                 max={1}
-                step={0.05}
-                value={engineState.isMuted ? 0 : engineState.volume}
-                onChange={(e) => audioEngine.setVolume(Number(e.target.value))}
-                className="w-16 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-pink-500"
+                step={0.02}
+                value={engineState.volume}
+                onChange={(e) =>
+                  audioEngine.setVolume(parseFloat(e.target.value))
+                }
+                aria-label="Volume"
+                className="w-20 accent-pink-500 h-1 bg-white/15 rounded-lg cursor-pointer"
               />
             </div>
 
             <button
-              onClick={() => onToggleFullscreen(!isFullscreen)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold text-white border border-white/10 transition"
+              onClick={() => onToggleFullscreen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-xs font-semibold text-white transition"
             >
-              {isFullscreen ? (
-                <>
-                  <ChevronDown className="w-4 h-4" />
-                  <span className="hidden sm:inline">접기</span>
-                </>
-              ) : (
-                <>
-                  <Maximize2 className="w-3.5 h-3.5 text-pink-400" />
-                  <span className="hidden sm:inline">전체화면 / 가사</span>
-                  <ChevronUp className="w-3.5 h-3.5 sm:hidden" />
-                </>
-              )}
+              <ChevronUp className="w-3.5 h-3.5 text-pink-400" />
+              <span className="hidden sm:inline">
+                {isKo ? "가사 · 전체화면" : "Lyrics · Expand"}
+              </span>
             </button>
           </div>
         </div>
@@ -708,4 +638,3 @@ export default function MusicPlayer({
     </>
   );
 }
-

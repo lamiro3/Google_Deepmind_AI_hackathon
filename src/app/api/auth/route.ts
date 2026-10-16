@@ -4,6 +4,17 @@ import { authenticateOrRegisterUser, getDashboardData } from "@/lib/db";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+
+    if (body.mode === "logout") {
+      const dashboard = getDashboardData(null);
+      const res = NextResponse.json(dashboard);
+      res.cookies.set("komposer_uid", "guest", {
+        path: "/",
+        maxAge: 60 * 60 * 24 * 30,
+      });
+      return res;
+    }
+
     const result = authenticateOrRegisterUser({
       mode: body.mode === "register" ? "register" : "login",
       email: body.email || "",
