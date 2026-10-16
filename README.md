@@ -14,7 +14,7 @@
 
 *100% Solo-Engineered for the Google AI & DeepMind Hackathon*
 
-[✨ Live Demo](#-quick-start) • [📽️ Demo Video](#) • [🏗️ Architecture](#-system-architecture) • [🚀 Features](#-key-features)
+[✨ Live Demo](#-quick-start) • [📽️ Demo Video](https://www.youtube.com/watch?v=nykei1nmXfk) • [🏗️ Architecture](#-system-architecture) • [🚀 Features](#-key-features)
 
 </div>
 
